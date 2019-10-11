@@ -77,4 +77,16 @@ Uses the indices of the wannier orbitals to match dft wannier data with structur
 cell_geometry.py so that the wannier values can be fit with the structural features. (Also contains 
 tools for turning Liang's old DFT input files into dumps which can be read by the rest of my programs)
 
+Files for actually running tight binding:
+Some of these have been slightly modified from the versions Liang gave me, but all the changes are pretty small. 
+bands_one_step.jl constructs the hamiltonian matrix (or creates a list used to construct it in tb.jl) from the hopping parameter (for one timestep) and finds band structure at some k-points. 
+bands_one_step_nn.jl same as bands_one_step.jl, but adds in averages hopping parameters for SOME next
+nearest neighbors. I haven't checked it very thouroughly, however. 
+
+htools.jl Has a function for solving the hamiltonian. 
+kspace.jl Builds paths/ grids of kpoints. 
+run_bands.jl runs bands_one_step.jl on each timestep, uses a rough method to parallelize it. 
+tb.jl I think this makes the Hamiltonian matrix, given the k point and hopping parameters. 
+mytools.jl I'm not sure what this does, but it's some tools imported for the other functions. 
+
 
