@@ -1,0 +1,26 @@
+
+For each time frame, and for each unit cell, the hoppings are given as a block of 10 lines:
+
+e_Pbs e_Pb_px e_Pb_py e_Pb_pz
+(filler) e_Ix_px e_Ix_py e_Ix_pz
+(filler) e_Iy_px e_Iy_py e_Iy_pz
+(filler) e_Iz_px e_Iz_py e_Iz_pz
+t_spsig_+x t_ppsig_+x t_pppi_+x t_pppi_+x
+t_spsig_+y t_ppsig_+y t_pppi_+y t_pppi_+y
+t_spsig_+z t_ppsig_+z t_pppi_+z t_pppi_+z
+t_spsig_-x t_ppsig_-x t_pppi_-x t_pppi_-x
+t_spsig_-y t_ppsig_-y t_pppi_-y t_pppi_-y
+t_spsig_-z t_ppsig_-z t_pppi_-z t_pppi_-z
+
+the first four lines are onsite energies for the 0 0 0 Pb atom and the 1/2 0 0, 0 1/2 0, and 0 0 1/2 I atoms. the next three lines represent hoppings between the 0 0 0 Pb atom and these three I atoms. the final three lines represent hoppings between the 0 0 0 Pb atom and the -1/2 0 0, 0 -1/2 0, and 0 0 -1/2 I atoms.
+
+for a given frame, each block of 10 lines represents one unit cell. the blocks refer to unit cells:
+0 0 0
+0 0 1
+...
+0 0 n-1
+0 1 0
+...
+n-1 n-1 n-1
+
+Each group of 64 (=4x4x4) blocks represents one time frame in the MD simulation.  
