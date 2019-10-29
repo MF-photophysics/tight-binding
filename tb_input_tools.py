@@ -1,281 +1,67 @@
-import numpy as np
-import matplotlib.pyplot as plt 
-import lammps_structure_tools as structure_tools
-import lammps_analysis_tools as analysis_tools
-import subprocess
-from index_conversions import *
-"""
-def stoich_to_unit_index(nx,ny,nz,N = 8): 
-	# takes unit cell indices nx,ny,nz for a Pb atom and orthorhombic box size N and gives the Pb orthorhombic handle
-	cell = [i%N for i in [(nx-nz)//2, ny//2,(nx + nz)//2]]
-	Pb_num = 1 + 2*abs(nx - nz)%4 + ny%2 
-	return [str(cell[0]) + ":" + str(cell[1]) + ":" + str(cell[2]), "Pb" + str(Pb_num)]
+from cell_geometry import *
+
+def sighop(x,params):
+	return params[0]*np.exp(-params[1]*x[0] - params[2]*x[1]**2) + params[3]
+
+def pihop(x,params): 
+	return params[0]*np.exp(-params[1]*x[0] - params[2]*x[1] - params[3]*x[2]) + params[4]
+
+def jnchop(x,params):
+	return params[0]*x[0]*np.exp(-params[1]*x[1] - params[2]*x[2])
+
+def onsite(x,params,T): 
+	# x[0]/params[0] are coulomb potential, x[1]/params[1] are hessian, params[2] is temperature coefficient, params[3] is 
+	return params[0]*x[0] + params[1]*x[1] + params[2]*T + params[3]
+
+# fitted parameters
+spsig_20ts_150_300_params = [72.5498,1.29895,0.268934,-0.143073]
+ppsig_20ts_150_300_params = [12.1361, 0.420229, 0.118432,-1.49759]
+pppi_20ts_150_300_params = [23.5502, 1.17949, 0.394076, 0.127548, -0.129589]
+
+pbs_20ts_150_300_params = [-1.59578, 0.00164292, -0.00114754, -5.18705]
+pbp_20ts_150_300_params = [-0.692346, -0.38538, -0.00155891, 4.9896]
+ip_20ts_150_300_params = [-1.48536, 0.0626952, -0.00117001, 4.75789]
+
+# using volume (of 2x2x2, can change this)
+pbs_20ts_150_220_300_params = [-1.56582, 0.0026258, -0.007925, 2.40268]
+pbp_20ts_150_220_300_params = [-0.66472, -0.368484, -0.0108627, 15.3676]
+ip_20ts_150_220_300_params = [-1.5067, 0.0617038, -0.00811448, 12.5022]
+
+spsighop = lambda x, T: sighop(x,spsig_20ts_150_300_params)
+ppsighop = lambda x, T: sighop(x,ppsig_20ts_150_300_params)
+pppihop = lambda x, T: pihop(x,pppi_20ts_150_300_params)
+
+pbs = lambda x, T: onsite(x,pbs_20ts_150_300_params, T)
+pbp = lambda x, T: onsite(x,pbp_20ts_150_300_params, T)
+ip = lambda x, T: onsite(x,ip_20ts_150_300_params, T)
 
 
-def I_x_ortho(Pb_index, N = 8): 
-	Pb_cell, Pb_num = [int(i) for i in Pb_index[0].split(":")], int(Pb_index[1][2])
-	if Pb_num == 1: 
-		I_cell,I_num = Pb_cell, 2
-	elif Pb_num == 2: 
-		I_cell,I_num = Pb_cell, 3
-	elif Pb_num == 3: 
-		I_cell,I_num = [Pb_cell[0],(Pb_cell[1] - 1)%N, Pb_cell[2]], 10
-	elif Pb_num == 4: 
-		I_cell,I_num = Pb_cell, 11
-	return [str(I_cell[0]) + ":" + str(I_cell[1]) + ":" + str(I_cell[2]), "I" + str(I_num)]
+psets1 = {"pbs": pbs_onsites, "pbp": pbp_onsites, "ip": ip_onsites, "spsig": spsig, "ppsig":ppsig, "pppi":pppi}
+featsets1 = {"pbs": onsite_no_features, "pbp": onsite_no_features, "Ip" : onsite_no_features, "spsig":bond_min_features, "ppsig": bond_min_features, "pppi":bond_min_features}
+model1 = {"pbs": pbs, "pbp": pbp, "ip": ip, "spsig" : spsighop, "ppsig": ppsighop, "pppi": pppihop}
 
-def I_y_ortho(Pb_index, N = 8):
-	Pb_cell, Pb_num = [int(i) for i in Pb_index[0].split(":")], int(Pb_index[1][2])
-	if Pb_num == 1: 
-		I_cell,I_num = [Pb_cell[0],Pb_cell[1],(Pb_cell[2]-1)% N], 1
-	elif Pb_num == 2: 
-		I_cell,I_num = [(Pb_cell[0]-1)%N, Pb_cell[1], Pb_cell[2]], 12
-	elif Pb_num == 3: 
-		I_cell,I_num = Pb_cell, 7
-	elif Pb_num == 4: 
-		I_cell,I_num = Pb_cell, 6
-	return [str(I_cell[0]) + ":" + str(I_cell[1]) + ":" + str(I_cell[2]), "I" + str(I_num)]
-
-def I_z_ortho(Pb_index, N = 8):
-	Pb_cell, Pb_num = [int(i) for i in Pb_index[0].split(":")], int(Pb_index[1][2])
-	if Pb_num == 1: 
-		I_cell,I_num = [(Pb_cell[0]-1)%N,Pb_cell[1],Pb_cell[2]], 8
-	elif Pb_num == 2: 
-		I_cell,I_num = [(Pb_cell[0]-1)%N, Pb_cell[1], Pb_cell[2]], 9
-	elif Pb_num == 3: 
-		I_cell,I_num = [Pb_cell[0],(Pb_cell[1]-1)%N,Pb_cell[2]], 4
-	elif Pb_num == 4: 
-		I_cell,I_num = Pb_cell, 5
-	return [str(I_cell[0]) + ":" + str(I_cell[1]) + ":" + str(I_cell[2]), "I" + str(I_num)]
-
-
-def periodic_fix(r, box_vect,tilting = None):#, verbose =False): 
-	t = np.array([0.0,0.0,0.0]) # translation, so that function is not mutative
-	if tilting: 
-		xy,xz,yz = tilting
-		v1 = np.array([box_vect[0], 0,0])
-		v2 = np.array([xy,box_vect[1],0])
-		v3 = np.array([xz,yz,box_vect[2]])
-	else: 
-		v1,v2,v3 = np.array([box_vect[0],0,0]),np.array([0,box_vect[1],0]),np.array([0,0,box_vect[2]])
-	vects = [v1,v2,v3]
-	for i in range(3): 
-		if r[i] > box_vect[i]/2:
-			t += -vects[i]
-		elif r[i] < -box_vect[i]/2:
-			t += vects[i]
-	#for i in range(3): 
-	#	if r[i] > box_vect[i]/2: 
-	#		t[i] =  - box_vect[i]
-	#	elif r[i] < -box_vect[i]/2: 
-	#		t[i] = box_vect[i]
-	#if verbose: 
-	#	print(r,t)
-	return r + t	
-"""
-
-def kcal_to_eV(E): 
-	return 0.04343 * E
-
-def write_hopping_data(dump, filename,timesteps = None, ortho_cell = False, n = None, n_vec = None, charges = "old"):
-	if timesteps is None: 
-		timesteps = dump.timesteps.keys()
-	E_PB_S, E_PB_P, E_I_P = -2.5, 6.0, 2.5 # averages, in eV
-	SP_SIG_a,SP_SIG_b, SP_SIG_c = 42.49, 0.964, -0.54
-	PP_SIG_a, PP_SIG_b, PP_SIG_c = 21.61,3.070, -5.88
-	PP_PI_a, PP_PI_b, PP_PI_c =  11.66, 1.030, -0.16
-	if charges == "old":
-		Q_PB, Q_I = 2.03, -1.13
-	elif charges == "new":
-		Q_PB, Q_I = 1.4012, -0.7006
-	t_sp = lambda r: SP_SIG_a*np.exp(-np.linalg.norm(r)/SP_SIG_b) + SP_SIG_c
-	t_pp_sig = lambda r: PP_SIG_a*np.exp(-np.linalg.norm(r)/PP_SIG_b) + PP_SIG_c
-	t_pp_pi = lambda r: PP_PI_a*np.exp(-np.linalg.norm(r)/PP_PI_b) + PP_PI_c
-	N_atoms = len(dump.structure.atoms)
-	
-	if n is None and n_vec is None: 
-		n = round((N_atoms/12)**(1/3)) # dimnesions in stoichiometric cells
-		# ^ don't think that will work
-	if n_vec is None:
-		nx_max,ny_max,nz_max = n,n,n
-	else: 
-		nx_max,ny_max,nz_max = n_vec
-
-	if ortho_cell: 
-		N = round((N_atoms/48)**(1/3)) # number of unit cells in MD run (4 stoich cells each)
-		print(N)
-		index_conversion = stoich_to_unit_index
-		I_x,I_y,I_z = I_x_ortho, I_y_ortho,I_z_ortho
-	elif ortho_cell is False: 
-		print(n)
-		N = round((N_atoms/12)**(1/3)) #n
-		#index_conversion = lambda nx,ny,nz,N = None: [str(nx%N) + ":" + str(ny%N) + ":" + str(nz%N), "Pb"]
-		index_conversion = lambda nx,ny,nz,N = None: [(nx%N, ny%N, nz%N), "Pb"]
-		I_x,I_y,I_z = lambda Pb_index,N = None : [Pb_index[0], "I1"], lambda Pb_index, N = None : [Pb_index[0], "I2"], lambda Pb_index, N = None : [Pb_index[0], "I3"]
-	Pb_coul_sum, I_coul_sum = 0,0 # to compute averages
-	for step in timesteps: # this loop computes average coulomb potentials
-		for nx in range(nx_max): 
-			for ny in range(ny_max): 
-				for nz in range(nz_max): 
-					Pb_index = index_conversion(nx,ny,nz,N)
-					Ix_plus_index, Iy_plus_index, Iz_plus_index = I_x(Pb_index,N), I_y(Pb_index, N), I_z(Pb_index, N)
-					Pb_coul_sum += kcal_to_eV(2 * dump.atom_pot(Pb_index, step, id_mode = "handles") / Q_PB)
-					I_coul_sum += kcal_to_eV(2 * dump.atom_pot(Ix_plus_index,step,id_mode = "handles")/ Q_I + 2 * dump.atom_pot(Iy_plus_index,step, id_mode = "handles" )/ Q_I +  2 * dump.atom_pot(Iz_plus_index, step, id_mode = "handles")/ Q_I)
-	# numbers may need changing
-	Pb_coul_ave = Pb_coul_sum / ((nx_max*ny_max*nz_max)* len(timesteps))
-	print("Pb ave  " + str(Pb_coul_ave))
-	I_coul_ave = I_coul_sum / ((3 * nx_max*ny_max*nz_max) * len(timesteps))
-	print("I ave  " + str(I_coul_ave))
+def full_hopping(dump, timesteps, n_vec, T, filename, coul_dump = False,model = model1):
+	features = write_param_file(dump, timesteps, n_vec, ortho_cell = False, N_ortho = None, param_sets = psets1, feature_sets = featsets1, coul = True,vdw = False, coul_dump = coul_dump,hessian = True, textfile = False)
+	pbs = [model["pbs"](i[4:],T) for i in features["pbs"]]
+	pbp = [model["pbp"](i[4:],T) for i in features["pbp"]]
+	ip = [model["ip"](i[4:],T) for i in features["ip"]]
+	spsig = [model["spsig"](i[4:],T) for i in features["spsig"]]
+	ppsig = [model["ppsig"](i[4:],T) for i in features["ppsig"]]
+	pppi = [model["pppi"](i[4:],T) for i in features["pppi"]]
+	#for t in timesteps:
+	#	for ix in range(n_vec[0]):
+	#		for iy in range(n_vec)
 	lines = []
-	for step in timesteps:
-		box = dump.timesteps[step].box_vect
-		if hasattr(dump.timesteps[step],'xy'): 
-			tilt = [dump.timesteps[step].xy,dump.timesteps[step].xz,dump.timesteps[step].yz]
-		else: 
-			tilt = None
-		for nx in range(nx_max): 
-			for ny in range(ny_max): 
-				for nz in range(nz_max): 
-					Pb_index = index_conversion(nx,ny,nz,N)
-					Ix_plus_index, Iy_plus_index, Iz_plus_index = I_x(Pb_index,N), I_y(Pb_index, N), I_z(Pb_index, N)
-					# wrong, kept around for now.Ix_minus_index, Iy_minus_index, Iz_minus_index = I_x(index_conversion((nx-1)%n, ny, nz,N),N), I_y(index_conversion(nx, (ny-1)%n, nz,N),N), I_z(index_conversion(nx, ny, (nz-1)%n,N),N)
-					Ix_minus_index, Iy_minus_index, Iz_minus_index = I_x(index_conversion((nx-1), ny, nz,N),N), I_y(index_conversion(nx, (ny-1), nz,N),N), I_z(index_conversion(nx, ny, (nz-1),N),N)
-					# ^ probably fixed
-					coul_Pb = kcal_to_eV(2 * dump.atom_pot(Pb_index, step, id_mode = "handles") / Q_PB)
-					coul_Ix, coul_Iy, coul_Iz = kcal_to_eV(2 * dump.atom_pot(Ix_plus_index,step,id_mode = "handles")/ Q_I), kcal_to_eV(2 * dump.atom_pot(Iy_plus_index,step, id_mode = "handles" )/ Q_I), kcal_to_eV(2 * dump.atom_pot(Iz_plus_index, step, id_mode = "handles")/ Q_I)
-					
-					lines.append(str(E_PB_S - (coul_Pb - Pb_coul_ave)) + (" " + str(E_PB_P - (coul_Pb - Pb_coul_ave)))*3)
-					lines.append(((" " + str(E_I_P - (coul_Ix - I_coul_ave)))*4)[1:])
-					lines.append(((" " + str(E_I_P - (coul_Iy - I_coul_ave)))*4)[1:])
-					lines.append(((" " + str(E_I_P - (coul_Iz - I_coul_ave)))*4)[1:])
-
-					Pb_pos = dump.atom_pos(Pb_index, step, id_mode = "handles")
-					Ix_plus_pos, Iy_plus_pos, Iz_plus_pos = dump.atom_pos(Ix_plus_index,step, id_mode = "handles"),dump.atom_pos(Iy_plus_index,step, id_mode = "handles"),dump.atom_pos(Iz_plus_index,step,id_mode = "handles")
-					Ix_minus_pos, Iy_minus_pos, Iz_minus_pos = dump.atom_pos(Ix_minus_index,step, id_mode = "handles"),dump.atom_pos(Iy_minus_index,step, id_mode = "handles"),dump.atom_pos(Iz_minus_index,step,id_mode = "handles")
-					t_sp_box = lambda r: t_sp(periodic_fix(r,box,tilt))
-					t_pp_sig_box = lambda r: t_pp_sig(periodic_fix(r,box,tilt))
-					t_pp_pi_box = lambda r: t_pp_pi(periodic_fix(r,box,tilt))
-					lines.append(str(t_sp_box(Pb_pos - Ix_plus_pos)) + " " + str(t_pp_sig_box(Pb_pos - Ix_plus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Ix_plus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Ix_plus_pos)))
-					lines.append(str(t_sp_box(Pb_pos - Iy_plus_pos)) + " " + str(t_pp_sig_box(Pb_pos - Iy_plus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Iy_plus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Iy_plus_pos)))
-					lines.append(str(t_sp_box(Pb_pos - Iz_plus_pos)) + " " + str(t_pp_sig_box(Pb_pos - Iz_plus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Iz_plus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Iz_plus_pos)))
-					lines.append(str(t_sp_box(Pb_pos - Ix_minus_pos)) + " " + str(t_pp_sig_box(Pb_pos - Ix_minus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Ix_minus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Ix_minus_pos)))
-					lines.append(str(t_sp_box(Pb_pos - Iy_minus_pos)) + " " + str(t_pp_sig_box(Pb_pos - Iy_minus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Iy_minus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Iy_minus_pos)))
-					lines.append(str(t_sp_box(Pb_pos - Iz_minus_pos)) + " " + str(t_pp_sig_box(Pb_pos - Iz_minus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Iz_minus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Iz_minus_pos)))
-
-					
-	try:
-		f = open(filename, "w")
-		f.write("\n".join(lines))# apparently .join is the most efficient way to write large strings
-	except MemoryError:
-		f = open(filename, "a")
-		for line in lines[:-1]:
-			f.write(line + "\n")
-		f.write(lines[-1])
-		
-
-def vdw_coul_potential(E_tot, E_coul, q, n, factor = 2): 
-	# q is charge for coulomb, n is number of electrons for van der waals
-	E_vdw = E_tot - E_coul
-	V_coul = kcal_to_eV(2*E_coul) / q
-	V_vdw = factor * kcal_to_eV(2*E_vdw) / n  # if vdw potential is linear in number of electrons, factor is 1
-	# it seems like the factor should be 2 based on perturbation theory, because E = k*n^2 so dE/dn = 2E/n
-	return V_vdw - V_coul # subtract V_coul because electron is negative
-
-
-def write_hopping_data_vdw(couldump,totdump, filename,timesteps = None, ortho_cell = False, n = None,n_vec = None, charges = "old"):
-	if timesteps is None: 
-		timesteps = couldump.timesteps.keys()
-	E_PB_S, E_PB_P, E_I_P = -2.5, 6.0, 2.5 # averages, in eV
-	SP_SIG_a,SP_SIG_b, SP_SIG_c = 42.49, 0.964, -0.54
-	PP_SIG_a, PP_SIG_b, PP_SIG_c = 21.61,3.070, -5.88
-	PP_PI_a, PP_PI_b, PP_PI_c =  11.66, 1.030, -0.16
-	if charges == "old":
-		Q_PB, Q_I = 2.03, -1.13
-	elif charges == "new":
-		Q_PB, Q_I = 1.4012, -0.7006
-	N_PB, N_I = 4 - Q_PB, 5 - Q_I # I am choosing to ignore s electrons on iodine
-	t_sp = lambda r: SP_SIG_a*np.exp(-np.linalg.norm(r)/SP_SIG_b) + SP_SIG_c
-	t_pp_sig = lambda r: PP_SIG_a*np.exp(-np.linalg.norm(r)/PP_SIG_b) + PP_SIG_c
-	t_pp_pi = lambda r: PP_PI_a*np.exp(-np.linalg.norm(r)/PP_PI_b) + PP_PI_c
-	N_atoms = len(couldump.structure.atoms)
-
-	if n is None and n_vec is None: 
-		n = round((N_atoms/12)**(1/3)) # dimnesions in stoichiometric cells
-		# ^ don't think that will work
-	if n_vec is None:
-		nx_max,ny_max,nz_max = n,n,n
-	else: 
-		nx_max,ny_max,nz_max = n_vec
-
-	if ortho_cell: 
-		N = round((N_atoms/48)**(1/3)) # number of unit cells in MD run (4 stoich cells each)
-		print(N)
-		index_conversion = stoich_to_unit_index
-		I_x,I_y,I_z = I_x_ortho, I_y_ortho,I_z_ortho
-	elif ortho_cell is False: 
-		print(n)
-		N = round((N_atoms/12)**(1/3)) #n
-		#index_conversion = lambda nx,ny,nz,N = None: [str(nx%N) + ":" + str(ny%N) + ":" + str(nz%N), "Pb"]
-		index_conversion = lambda nx,ny,nz,N = None: [(nx%N, ny%N, nz%N), "Pb"]
-		I_x,I_y,I_z = lambda Pb_index,N = None : [Pb_index[0], "I1"], lambda Pb_index, N = None : [Pb_index[0], "I2"], lambda Pb_index, N = None : [Pb_index[0], "I3"]
-	Pb_pot_sum, I_pot_sum = 0,0 # to compute averages
-	for step in timesteps: # this loop computes average coulomb potentials
-		for nx in range(nx_max): 
-			for ny in range(ny_max): 
-				for nz in range(nz_max): 
-					Pb_index = index_conversion(nx,ny,nz,N)
-					Ix_plus_index, Iy_plus_index, Iz_plus_index = I_x(Pb_index,N), I_y(Pb_index, N), I_z(Pb_index, N)
-					Pb_pot_sum += vdw_coul_potential(totdump.atom_pot(Pb_index, step, id_mode = "handles"), couldump.atom_pot(Pb_index, step, id_mode = "handles"), Q_PB, N_PB)
-					I_pot_sum += vdw_coul_potential(totdump.atom_pot(Ix_plus_index,step,id_mode = "handles"), couldump.atom_pot(Ix_plus_index,step,id_mode = "handles"), Q_I, N_I)
-					I_pot_sum +=  vdw_coul_potential(totdump.atom_pot(Iy_plus_index,step,id_mode = "handles"), couldump.atom_pot(Iy_plus_index,step,id_mode = "handles"), Q_I, N_I)
-					I_pot_sum +=  vdw_coul_potential(totdump.atom_pot(Iz_plus_index,step,id_mode = "handles"), couldump.atom_pot(Iz_plus_index,step,id_mode = "handles"), Q_I, N_I)
-	# numbers may need changing
-	Pb_pot_ave = Pb_pot_sum / ((nx_max*ny_max*nz_max)* len(timesteps))
-	print("Pb ave  " + str(Pb_pot_ave))
-	I_pot_ave = I_pot_sum / ((3 * nx_max*ny_max*nz_max) * len(timesteps))
-	print("I ave  " + str(I_pot_ave))
-	lines = []
-	for step in timesteps:
-		box = couldump.timesteps[step].box_vect
-		if hasattr(couldump.timesteps[step],'xy'): 
-			tilt = [couldump.timesteps[step].xy,couldump.timesteps[step].xz,couldump.timesteps[step].yz]
-		else: 
-			tilt = None
-		for nx in range(nx_max): 
-			for ny in range(ny_max): 
-				for nz in range(nz_max): 
-					Pb_index = index_conversion(nx,ny,nz,N)
-					Ix_plus_index, Iy_plus_index, Iz_plus_index = I_x(Pb_index,N), I_y(Pb_index, N), I_z(Pb_index, N)
-					# wrong, kept around for now.Ix_minus_index, Iy_minus_index, Iz_minus_index = I_x(index_conversion((nx-1)%n, ny, nz,N),N), I_y(index_conversion(nx, (ny-1)%n, nz,N),N), I_z(index_conversion(nx, ny, (nz-1)%n,N),N)
-					Ix_minus_index, Iy_minus_index, Iz_minus_index = I_x(index_conversion((nx-1), ny, nz,N),N), I_y(index_conversion(nx, (ny-1), nz,N),N), I_z(index_conversion(nx, ny, (nz-1),N),N)
-					# ^ probably fixed
-
-					V_Pb = vdw_coul_potential(totdump.atom_pot(Pb_index, step, id_mode = "handles"), couldump.atom_pot(Pb_index, step, id_mode = "handles"), Q_PB, N_PB)
-					V_Ix = vdw_coul_potential(totdump.atom_pot(Ix_plus_index,step,id_mode = "handles"), couldump.atom_pot(Ix_plus_index,step,id_mode = "handles"), Q_I, N_I)
-					V_Iy =  vdw_coul_potential(totdump.atom_pot(Iy_plus_index,step,id_mode = "handles"), couldump.atom_pot(Iy_plus_index,step,id_mode = "handles"), Q_I, N_I)
-					V_Iz =  vdw_coul_potential(totdump.atom_pot(Iz_plus_index,step,id_mode = "handles"), couldump.atom_pot(Iz_plus_index,step,id_mode = "handles"), Q_I, N_I)
-					
-					
-					lines.append(str(E_PB_S  + V_Pb - Pb_pot_ave) + (" " + str(E_PB_P + V_Pb - Pb_pot_ave))*3)
-					lines.append(((" " + str(E_I_P + V_Ix - I_pot_ave))*4)[1:])
-					lines.append(((" " + str(E_I_P + V_Iy - I_pot_ave))*4)[1:])
-					lines.append(((" " + str(E_I_P + V_Iz - I_pot_ave))*4)[1:])
-
-					Pb_pos = couldump.atom_pos(Pb_index, step, id_mode = "handles")
-					Ix_plus_pos, Iy_plus_pos, Iz_plus_pos = couldump.atom_pos(Ix_plus_index,step, id_mode = "handles"),couldump.atom_pos(Iy_plus_index,step, id_mode = "handles"),couldump.atom_pos(Iz_plus_index,step,id_mode = "handles")
-					Ix_minus_pos, Iy_minus_pos, Iz_minus_pos = couldump.atom_pos(Ix_minus_index,step, id_mode = "handles"),couldump.atom_pos(Iy_minus_index,step, id_mode = "handles"),couldump.atom_pos(Iz_minus_index,step,id_mode = "handles")
-					t_sp_box = lambda r: t_sp(periodic_fix(r,box,tilt))
-					t_pp_sig_box = lambda r: t_pp_sig(periodic_fix(r,box,tilt))
-					t_pp_pi_box = lambda r: t_pp_pi(periodic_fix(r,box,tilt))
-					lines.append(str(t_sp_box(Pb_pos - Ix_plus_pos)) + " " + str(t_pp_sig_box(Pb_pos - Ix_plus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Ix_plus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Ix_plus_pos)))
-					lines.append(str(t_sp_box(Pb_pos - Iy_plus_pos)) + " " + str(t_pp_sig_box(Pb_pos - Iy_plus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Iy_plus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Iy_plus_pos)))
-					lines.append(str(t_sp_box(Pb_pos - Iz_plus_pos)) + " " + str(t_pp_sig_box(Pb_pos - Iz_plus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Iz_plus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Iz_plus_pos)))
-					lines.append(str(t_sp_box(Pb_pos - Ix_minus_pos)) + " " + str(t_pp_sig_box(Pb_pos - Ix_minus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Ix_minus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Ix_minus_pos)))
-					lines.append(str(t_sp_box(Pb_pos - Iy_minus_pos)) + " " + str(t_pp_sig_box(Pb_pos - Iy_minus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Iy_minus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Iy_minus_pos)))
-					lines.append(str(t_sp_box(Pb_pos - Iz_minus_pos)) + " " + str(t_pp_sig_box(Pb_pos - Iz_minus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Iz_minus_pos)) + " " + str(t_pp_pi_box(Pb_pos - Iz_minus_pos)))
-
-					
+	for i in range(len(timesteps) * n_vec[0]*n_vec[1]*n_vec[2]):
+		lines.append(" ".join([str(i) for i in [pbs[i], pbp[3*i], pbp[3*i + 1], pbp[3*i + 2]]]))
+		lines.append(" ".join([str(i) for i in [ip[9*i], ip[9*i], ip[9*i + 1], ip[9*i + 2]]]))
+		lines.append(" ".join([str(i) for i in [ip[9*i + 3], ip[9*i + 3], ip[9*i + 4], ip[9*i + 5]]]))
+		lines.append(" ".join([str(i) for i in [ip[9*i + 6], ip[9*i + 6], ip[9*i + 7], ip[9*i + 8]]]))
+		lines.append(" ".join([str(i) for i in [spsig[6*i], ppsig[6*i], pppi[12*i], pppi[12*i + 1]]]))
+		lines.append(" ".join([str(i) for i in [spsig[6*i + 1], ppsig[6*i + 1], pppi[12*i + 2], pppi[12*i + 3]]]))
+		lines.append(" ".join([str(i) for i in [spsig[6*i + 2], ppsig[6*i + 2], pppi[12*i + 4], pppi[12*i + 5]]]))
+		lines.append(" ".join([str(i) for i in [spsig[6*i + 3], ppsig[6*i + 3], pppi[12*i + 6], pppi[12*i + 7]]]))
+		lines.append(" ".join([str(i) for i in [spsig[6*i + 4], ppsig[6*i + 4], pppi[12*i + 8], pppi[12*i + 9]]]))
+		lines.append(" ".join([str(i) for i in [spsig[6*i + 5], ppsig[6*i + 5], pppi[12*i + 10], pppi[12*i + 11]]]))
 	f = open(filename, "w")
-	f.write("\n".join(lines))# apparently .join is the most efficient way to write large strings
-
-
+	f.write("\n".join(lines))
